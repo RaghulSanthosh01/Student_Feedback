@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/83c78dcf-051c-4802-89e9-838e777c1627/resourceGroups/student-feedback-app/providers/Microsoft.Web/sites/student-feedback-bd",
+    "appService.deploySubpath": "backend"
+}

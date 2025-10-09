@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin - Feedback Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body { min-height: 100vh; font-family: "Inter", sans-serif; background-color: #f5f6fa; padding: 2rem 1rem; }
+    .admin-card { background: #fff; border-radius: 12px; box-shadow: 0px 6px 15px rgba(0,0,0,0.08); padding: 2rem; max-width: 950px; margin: 0 auto; }
+    h2 { font-weight: 700; text-align: center; margin-bottom: 2rem; color: #333; }
+    
+    /* Table Styling */
+    table { border-collapse: separate !important; border-spacing: 0; border-radius: 8px; overflow: hidden; background: #fff; width: 100%; }
+    thead { background-color: #e3e6eb; } /* Slightly darker header */
+    thead th { font-weight: 600; color: #444; text-align: left; padding: 12px 15px; }
+    tbody td { padding: 12px 15px; color: #444; vertical-align: middle; }
+    tbody tr:nth-child(even) { background-color: #f9f9f9; }
+    tbody tr:hover { background-color: #e8f0fe; }
+    thead th:first-child { border-top-left-radius: 8px; }
+    thead th:last-child { border-top-right-radius: 8px; }
+    /* You can remove the bottom-radius rules if you prefer the table borders to be clean */
+    /* tbody tr:last-child td:first-child { border-bottom-left-radius: 8px; } */
+    /* tbody tr:last-child td:last-child { border-bottom-right-radius: 8px; } */
+
+    /* 📊 Sentiment Styling (NEW) */
+    .sentiment-badge { 
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.85em;
+        text-transform: capitalize;
+    }
+    .sentiment-positive { background-color: #d4edda; color: #155724; }
+    .sentiment-negative { background-color: #f8d7da; color: #721c24; }
+    .sentiment-neutral { background-color: #fff3cd; color: #856404; }
+    .sentiment-unknown { background-color: #e2e3e5; color: #383d41; }
+  </style>
+</head>
+<body>
+  <div class="admin-card">
+    <h2>Admin Feedback Dashboard</h2>
+    <div class="table-responsive">
+      <table class="table" id="feedbackTable">
+        <thead>
+          <tr>
+            <th>Course</th>
+            <th>Teacher</th>
+            <th>Feedback</th>
+            <th>Sentiment</th>
+            <th>Submitted At</th>
+          </tr>
+        </thead>
+        <tbody>
+          </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="js/admin.js" defer></script>
+</body>
+</html>
