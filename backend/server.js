@@ -32,28 +32,53 @@ const config = {
   },
 };
 
-// ---------------------- Sentiment Analysis Function (KEYWORD ONLY) ----------------------
-// No external API calls are made. Sentiment is determined solely by these keywords.
-const positiveKeywords = ['good', 'great', 'excellent', 'amazing', 'fantastic', 'love', 'helpful', 'best'];
-const negativeKeywords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'disappointing', 'worst'];
+// --- UPDATED Sentiment Analysis Function (KEYWORD ONLY) ---
+const positiveKeywords = [
+    'good', 'great', 'excellent', 'amazing', 'fantastic', 
+    'love', 'helpful', 'best', 'clear', 'engaging', 
+    'understanding', 'explaining', 'knowledgeable', 'organized', 
+    'patient', 'effective', 'inspiring', 'fun', 'enjoyable',
+    'easy' // Added 'easy' for good explanation
+];
+const negativeKeywords = [
+    'bad', 'poor', 'terrible', 'awful', 'hate', 
+    'disappointing', 'worst', 'confusing', 'boring', 
+    'unhelpful', 'unclear', 'difficult' // Added teaching-specific negatives
+];
 
 async function getSentiment(feedbackText) {
     const textLower = feedbackText.toLowerCase();
 
-    // 1. Check for negative keywords (often prioritized for quick flagging)
+    // 1. Count keyword occurrences
+    let negativeCount = 0;
     for (const keyword of negativeKeywords) {
         if (textLower.includes(keyword)) {
-            console.log(`Sentiment: 'negative' via keyword match: ${keyword}`);
-            return 'negative';
+            negativeCount++;
         }
     }
-    
-    // 2. Check for positive keywords
+
+    let positiveCount = 0;
     for (const keyword of positiveKeywords) {
         if (textLower.includes(keyword)) {
-            console.log(`Sentiment: 'positive' via keyword match: ${keyword}`);
-            return 'positive';
+            positiveCount++;
         }
+    }
+
+    // 2. Determine sentiment based on counts
+    if (positiveCount > 0 && negativeCount === 0) {
+        console.log(`Sentiment: 'positive' via keyword matches: ${positiveCount}`);
+        return 'positive';
+    } 
+    
+    if (negativeCount > 0 && positiveCount === 0) {
+        console.log(`Sentiment: 'negative' via keyword matches: ${negativeCount}`);
+        return 'negative';
+    } 
+    
+    if (positiveCount > 0 && negativeCount > 0) {
+        // Mixed sentiment (e.g., "Good class but the explaining was confusing")
+        console.log("Mixed keywords found. Defaulting to 'neutral'.");
+        return 'neutral';
     }
     
     // 3. Default to neutral if no clear keywords are found
@@ -73,7 +98,7 @@ app.post("/api/saveFeedback", async (req, res) => {
   let pool;
   let sentiment = 'unknown'; 
   try {
-    // 1. Analyze sentiment (using only keyword logic now)
+    // 1. Analyze sentiment (using keyword logic)
     sentiment = await getSentiment(feedback);
 
     // 2. Connect to SQL database
@@ -110,11 +135,11 @@ app.get("/api/getFeedback", async (req, res) => {
     const result = await pool.request().query(
       `
         SELECT 
-            Course, 
-            Teacher, 
-            FeedbackText, 
-            Sentiment, 
-            SubmittedAt 
+          Course, 
+          Teacher, 
+          FeedbackText, 
+          Sentiment, 
+          SubmittedAt 
         FROM Feedback 
         ORDER BY SubmittedAt DESC
       `
