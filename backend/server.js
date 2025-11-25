@@ -3,7 +3,6 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import sql from "mssql";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -33,97 +32,35 @@ const config = {
   },
 };
 
-// ---------------------- Gemini Client ----------------------
-if (!process.env.GEMINI_API_KEY) {
-    console.error("FATAL ERROR: GEMINI_API_KEY is not set.");
-}
-const genAI = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY}); 
-
-// ---------------------- Sentiment Analysis Function (FIXED with JSON Mode) ----------------------
-const MAX_RETRIES = 3;
-const DELAY_MS = 1000;
+// ---------------------- Sentiment Analysis Function (KEYWORD ONLY) ----------------------
+// No external API calls are made. Sentiment is determined solely by these keywords.
+const positiveKeywords = ['good', 'great', 'excellent', 'amazing', 'fantastic', 'love', 'helpful', 'best'];
+const negativeKeywords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'disappointing', 'worst'];
 
 async function getSentiment(feedbackText) {
     const textLower = feedbackText.toLowerCase();
 
-    // --- START: EXPANDED KEYWORD OVERRIDE ---
-    
-    const positiveKeywords = ['good', 'great', 'excellent', 'amazing', 'fantastic', 'love', 'helpful', 'best'];
-    const negativeKeywords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'disappointing', 'worst'];
-    
-    // Check for positive keywords
-    for (const keyword of positiveKeywords) {
-        if (textLower.includes(keyword)) {
-            return 'positive';
-        }
-    }
-    
-    // Check for negative keywords
+    // 1. Check for negative keywords (often prioritized for quick flagging)
     for (const keyword of negativeKeywords) {
         if (textLower.includes(keyword)) {
+            console.log(`Sentiment: 'negative' via keyword match: ${keyword}`);
             return 'negative';
         }
     }
     
-    // --- END: EXPANDED KEYWORD OVERRIDE ---
-
-    // --- FALLBACK: GEMINI AI ANALYSIS ---
-
-    // Model usage is slightly different with the new SDK, using ai.models
-    const model = genAI.models.getGenerativeModel({ model: "gemini-1.5-flash" }); 
-    
-    // Use JSON mode to force a predictable, structured response
-    const generationConfig = {
-        responseMimeType: "application/json",
-        responseSchema: {
-            type: "OBJECT",
-            properties: {
-                sentiment: {
-                    type: "STRING",
-                    description: "The sentiment of the feedback, must be 'positive', 'negative', or 'neutral'."
-                }
-            },
-            required: ["sentiment"]
-        }
-    };
-    
-    const prompt = `
-        Analyze the following student feedback and determine its core sentiment.
-        Feedback: "${feedbackText}"
-    `;
-
-    for (let i = 0; i < MAX_RETRIES; i++) {
-        try {
-            const result = await model.generateContent({
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
-                config: generationConfig,
-            });
-
-            const jsonResponseText = result.text.trim();
-            const parsedJson = JSON.parse(jsonResponseText);
-            
-            // Check if the sentiment is one of the allowed values
-            const sentiment = parsedJson.sentiment ? parsedJson.sentiment.toLowerCase() : 'unknown';
-            if (['positive', 'negative', 'neutral'].includes(sentiment)) {
-                return sentiment;
-            }
-            
-            console.warn("Gemini returned invalid structured sentiment:", sentiment);
-            return 'unknown';
-
-        } catch (error) {
-            console.error(`Attempt ${i + 1} failed. Gemini API Error or JSON Parse Error:`, error.message);
-            if (i < MAX_RETRIES - 1) {
-                // Exponential backoff
-                const delay = DELAY_MS * Math.pow(2, i);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                return "unknown"; 
-            }
+    // 2. Check for positive keywords
+    for (const keyword of positiveKeywords) {
+        if (textLower.includes(keyword)) {
+            console.log(`Sentiment: 'positive' via keyword match: ${keyword}`);
+            return 'positive';
         }
     }
-    return "unknown"; 
+    
+    // 3. Default to neutral if no clear keywords are found
+    console.log("No clear keyword found. Defaulting to 'neutral'.");
+    return "neutral";
 }
+// ----------------------------------------------------------------------------------
 
 // ---------------------- POST: Save Feedback (Data Submission Endpoint) ----------------------
 app.post("/api/saveFeedback", async (req, res) => {
@@ -134,9 +71,10 @@ app.post("/api/saveFeedback", async (req, res) => {
   }
 
   let pool;
+  let sentiment = 'unknown'; 
   try {
-    // 1. Analyze sentiment (now includes keyword override)
-    const sentiment = await getSentiment(feedback);
+    // 1. Analyze sentiment (using only keyword logic now)
+    sentiment = await getSentiment(feedback);
 
     // 2. Connect to SQL database
     pool = await sql.connect(config);
@@ -159,7 +97,7 @@ app.post("/api/saveFeedback", async (req, res) => {
   } catch (err) {
     console.error("Database or Server Error saving feedback:", err);
     if (pool) pool.close(); 
-    res.status(500).json({ message: "Error saving feedback. Check server logs." });
+    res.status(500).json({ message: "Error saving feedback. Check server logs.", calculatedSentiment: sentiment });
   }
 });
 

@@ -14,7 +14,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   
   // Define API URL and DOM elements
-  const apiUrl = "https://student-feedback-bd-ajc8acbgdtadcvaw.eastasia-01.azurewebsites.net/api/getFeedback";
+  // 💡 NOTE: The URL below MUST match your deployed backend's root URL.
+  // Use the base URL of your deployed backend (Azure App Service)
+  const baseUrl = "https://student-feedback-bd-ajc8acbgdtadcvaw.eastasia-01.azurewebsites.net"; 
+  const apiUrl = `${baseUrl}/api/getFeedback`;
   const tbody = document.querySelector("#feedbackTable tbody");
 
   try {
@@ -47,7 +50,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       tr.appendChild(createTextCell(item.FeedbackText)); 
       
       // Sentiment Cell
-      const sentimentValue = (item.Sentiment || 'unknown').toLowerCase();
+      const sentimentValue = (item.Sentiment || 'neutral').toLowerCase(); // Default to 'neutral'
       const sentimentClass = `sentiment-${sentimentValue}`;
       const sentimentCell = document.createElement("td");
       
@@ -71,7 +74,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const errorRow = document.createElement('tr');
     errorRow.innerHTML = 
         `<td colspan="5" style="text-align:center;color:red;font-weight:600;">
-            ❌ Failed to load feedback. Check API connection. (${err.message})
+            ❌ Failed to load feedback. Check API connection and CORS settings. (${err.message})
         </td>`;
     tbody.innerHTML = ''; 
     tbody.appendChild(errorRow);
