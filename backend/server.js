@@ -3,7 +3,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import sql from "mssql";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai"; // *** NEW SDK IMPORT ***
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -15,37 +15,60 @@ app.use(bodyParser.json());
 // ---------------------- CORS ----------------------
 const frontendUrl = "https://green-hill-0857a6400.1.azurestaticapps.net"; 
 app.use(
-  cors({
-    origin: frontendUrl,
-    credentials: true,
-  })
+  cors({
+    origin: frontendUrl,
+    credentials: true,
+  })
 );
 
 // ---------------------- SQL Server config ----------------------
 const config = {
-  user: process.env.SQL_USER,
-  password: process.env.SQL_PASSWORD,
-  server: process.env.SQL_SERVER,
-  database: process.env.SQL_DATABASE,
-  options: { 
+  user: process.env.SQL_USER,
+  password: process.env.SQL_PASSWORD,
+  server: process.env.SQL_SERVER,
+  database: process.env.SQL_DATABASE,
+  options: { 
     encrypt: true, 
     trustServerCertificate: true 
   },
 };
 
-// ---------------------- Gemini Client (UPDATED) ----------------------
+// ---------------------- Gemini Client ----------------------
 if (!process.env.GEMINI_API_KEY) {
     console.error("FATAL ERROR: GEMINI_API_KEY is not set.");
 }
-// *** NEW CLIENT INSTANTIATION ***
 const genAI = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY}); 
 
 // ---------------------- Sentiment Analysis Function (FIXED with JSON Mode) ----------------------
-// Note: We are reverting to the *newest* JSON-mode fix, which is more reliable.
 const MAX_RETRIES = 3;
 const DELAY_MS = 1000;
 
 async function getSentiment(feedbackText) {
+    const textLower = feedbackText.toLowerCase();
+
+    // --- START: EXPANDED KEYWORD OVERRIDE ---
+    
+    const positiveKeywords = ['good', 'great', 'excellent', 'amazing', 'fantastic', 'love', 'helpful', 'best'];
+    const negativeKeywords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'disappointing', 'worst'];
+    
+    // Check for positive keywords
+    for (const keyword of positiveKeywords) {
+        if (textLower.includes(keyword)) {
+            return 'positive';
+        }
+    }
+    
+    // Check for negative keywords
+    for (const keyword of negativeKeywords) {
+        if (textLower.includes(keyword)) {
+            return 'negative';
+        }
+    }
+    
+    // --- END: EXPANDED KEYWORD OVERRIDE ---
+
+    // --- FALLBACK: GEMINI AI ANALYSIS ---
+
     // Model usage is slightly different with the new SDK, using ai.models
     const model = genAI.models.getGenerativeModel({ model: "gemini-1.5-flash" }); 
     
@@ -104,50 +127,50 @@ async function getSentiment(feedbackText) {
 
 // ---------------------- POST: Save Feedback (Data Submission Endpoint) ----------------------
 app.post("/api/saveFeedback", async (req, res) => {
-  const { studentEmail, course, teacher, feedback } = req.body;
+  const { studentEmail, course, teacher, feedback } = req.body;
 
-  if (!studentEmail || !course || !teacher || !feedback) {
-    return res.status(400).json({ message: "Missing required fields in request body" });
-  }
+  if (!studentEmail || !course || !teacher || !feedback) {
+    return res.status(400).json({ message: "Missing required fields in request body" });
+  }
 
-  let pool;
-  try {
-    // 1. Analyze sentiment
-    const sentiment = await getSentiment(feedback);
+  let pool;
+  try {
+    // 1. Analyze sentiment (now includes keyword override)
+    const sentiment = await getSentiment(feedback);
 
-    // 2. Connect to SQL database
-    pool = await sql.connect(config);
-    
-    // 3. Save to SQL database 
-    await pool.request()
-      .input("StudentEmail", sql.NVarChar, studentEmail)
-      .input("Course", sql.NVarChar, course)
-      .input("Teacher", sql.NVarChar, teacher)
-      .input("FeedbackText", sql.NVarChar, feedback)
-      .input("Sentiment", sql.NVarChar, sentiment)
-      .query(`
-        INSERT INTO Feedback (StudentEmail, Course, Teacher, FeedbackText, Sentiment, SubmittedAt)
-        VALUES (@StudentEmail, @Course, @Teacher, @FeedbackText, @Sentiment, GETDATE())
-      `);
+    // 2. Connect to SQL database
+    pool = await sql.connect(config);
+    
+    // 3. Save to SQL database 
+    await pool.request()
+      .input("StudentEmail", sql.NVarChar, studentEmail)
+      .input("Course", sql.NVarChar, course)
+      .input("Teacher", sql.NVarChar, teacher)
+      .input("FeedbackText", sql.NVarChar, feedback)
+      .input("Sentiment", sql.NVarChar, sentiment)
+      .query(`
+        INSERT INTO Feedback (StudentEmail, Course, Teacher, FeedbackText, Sentiment, SubmittedAt)
+        VALUES (@StudentEmail, @Course, @Teacher, @FeedbackText, @Sentiment, GETDATE())
+      `);
     
     pool.close();
 
-    res.status(201).json({ message: "Feedback saved successfully", sentiment });
-  } catch (err) {
-    console.error("Database or Server Error saving feedback:", err);
+    res.status(201).json({ message: "Feedback saved successfully", sentiment });
+  } catch (err) {
+    console.error("Database or Server Error saving feedback:", err);
     if (pool) pool.close(); 
-    res.status(500).json({ message: "Error saving feedback. Check server logs." });
-  }
+    res.status(500).json({ message: "Error saving feedback. Check server logs." });
+  }
 });
 
 // ---------------------- GET: Fetch Feedback (Admin Dashboard Endpoint) ----------------------
 app.get("/api/getFeedback", async (req, res) => {
     let pool;
-  try {
-    pool = await sql.connect(config);
-    
-    const result = await pool.request().query(
-      `
+  try {
+    pool = await sql.connect(config);
+    
+    const result = await pool.request().query(
+      `
         SELECT 
             Course, 
             Teacher, 
@@ -157,19 +180,19 @@ app.get("/api/getFeedback", async (req, res) => {
         FROM Feedback 
         ORDER BY SubmittedAt DESC
       `
-    );
+    );
     pool.close();
     
-    res.status(200).json(result.recordset);
-  } catch (err) {
-    console.error("Error fetching feedback:", err);
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error("Error fetching feedback:", err);
     if (pool) pool.close();
-    res.status(500).json({ message: "Error fetching feedback" });
-  }
+    res.status(500).json({ message: "Error fetching feedback" });
+  }
 });
 
 // ---------------------- Start Server ----------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`✅ Server running on port ${port}`);
+  console.log(`✅ Server running on port ${port}`);
 });
