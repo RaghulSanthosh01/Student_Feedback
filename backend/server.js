@@ -3,7 +3,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import sql from "mssql";
 import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai"; // *** NEW SDK IMPORT ***
 
 dotenv.config();
 
@@ -13,7 +13,6 @@ const app = express();
 app.use(bodyParser.json());
 
 // ---------------------- CORS ----------------------
-// Ensure this URL matches your Azure Static Web App URL
 const frontendUrl = "https://green-hill-0857a6400.1.azurestaticapps.net"; 
 app.use(
   cors({
@@ -23,7 +22,6 @@ app.use(
 );
 
 // ---------------------- SQL Server config ----------------------
-// Reads environment variables from the .env file
 const config = {
   user: process.env.SQL_USER,
   password: process.env.SQL_PASSWORD,
@@ -31,46 +29,77 @@ const config = {
   database: process.env.SQL_DATABASE,
   options: { 
     encrypt: true, 
-    trustServerCertificate: true // Crucial for Azure SQL connections
+    trustServerCertificate: true 
   },
 };
 
-// ---------------------- Gemini Client ----------------------
+// ---------------------- Gemini Client (UPDATED) ----------------------
 if (!process.env.GEMINI_API_KEY) {
     console.error("FATAL ERROR: GEMINI_API_KEY is not set.");
 }
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// *** NEW CLIENT INSTANTIATION ***
+const genAI = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY}); 
 
-// ---------------------- Sentiment Analysis Function (FIXED) ----------------------
+// ---------------------- Sentiment Analysis Function (FIXED with JSON Mode) ----------------------
+// Note: We are reverting to the *newest* JSON-mode fix, which is more reliable.
+const MAX_RETRIES = 3;
+const DELAY_MS = 1000;
+
 async function getSentiment(feedbackText) {
-  try {
-    const prompt = `
-      You are a highly restrictive sentiment analysis assistant.
-      Analyze the feedback below and respond with ONLY ONE WORD, strictly from the list:
-      "positive", "negative", or "neutral". Do not include any punctuation, quotes, or other words.
-      Feedback: "${feedbackText}"
-    `;
+    // Model usage is slightly different with the new SDK, using ai.models
+    const model = genAI.models.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+    
+    // Use JSON mode to force a predictable, structured response
+    const generationConfig = {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: "OBJECT",
+            properties: {
+                sentiment: {
+                    type: "STRING",
+                    description: "The sentiment of the feedback, must be 'positive', 'negative', or 'neutral'."
+                }
+            },
+            required: ["sentiment"]
+        }
+    };
+    
+    const prompt = `
+        Analyze the following student feedback and determine its core sentiment.
+        Feedback: "${feedbackText}"
+    `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    
-    // 1. Get raw text
-    let sentiment = result.response.text();
+    for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+            const result = await model.generateContent({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                config: generationConfig,
+            });
 
-    // 2. CRITICAL FIX: Strip all non-alphabetic characters (e.g., quotes, periods, newlines, spaces) 
-    sentiment = sentiment.trim().toLowerCase().replace(/[^a-z]/g, '');
+            const jsonResponseText = result.text.trim();
+            const parsedJson = JSON.parse(jsonResponseText);
+            
+            // Check if the sentiment is one of the allowed values
+            const sentiment = parsedJson.sentiment ? parsedJson.sentiment.toLowerCase() : 'unknown';
+            if (['positive', 'negative', 'neutral'].includes(sentiment)) {
+                return sentiment;
+            }
+            
+            console.warn("Gemini returned invalid structured sentiment:", sentiment);
+            return 'unknown';
 
-    // 3. Match against clean keywords
-    if (sentiment.includes("positive")) return "positive";
-    if (sentiment.includes("negative")) return "negative";
-    if (sentiment.includes("neutral")) return "neutral";
-    
-    console.warn("Unexpected sentiment response from Gemini (after cleaning):", sentiment);
-    return "unknown"; // Returns 'unknown' if analysis fails or is ambiguous
-  } catch (error) {
-    console.error("Gemini API Error:", error.message);
-    return "unknown";
-  }
+        } catch (error) {
+            console.error(`Attempt ${i + 1} failed. Gemini API Error or JSON Parse Error:`, error.message);
+            if (i < MAX_RETRIES - 1) {
+                // Exponential backoff
+                const delay = DELAY_MS * Math.pow(2, i);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                return "unknown"; 
+            }
+        }
+    }
+    return "unknown"; 
 }
 
 // ---------------------- POST: Save Feedback (Data Submission Endpoint) ----------------------
@@ -89,7 +118,7 @@ app.post("/api/saveFeedback", async (req, res) => {
     // 2. Connect to SQL database
     pool = await sql.connect(config);
     
-    // 3. Save to SQL database using prepared inputs for security and reliability
+    // 3. Save to SQL database 
     await pool.request()
       .input("StudentEmail", sql.NVarChar, studentEmail)
       .input("Course", sql.NVarChar, course)
@@ -101,14 +130,12 @@ app.post("/api/saveFeedback", async (req, res) => {
         VALUES (@StudentEmail, @Course, @Teacher, @FeedbackText, @Sentiment, GETDATE())
       `);
     
-    // 4. Close connection after successful operation
     pool.close();
 
-    // 5. Return the determined sentiment to the frontend for confirmation message
     res.status(201).json({ message: "Feedback saved successfully", sentiment });
   } catch (err) {
     console.error("Database or Server Error saving feedback:", err);
-    if (pool) pool.close(); // Ensure pool is closed even on error
+    if (pool) pool.close(); 
     res.status(500).json({ message: "Error saving feedback. Check server logs." });
   }
 });
@@ -119,7 +146,6 @@ app.get("/api/getFeedback", async (req, res) => {
   try {
     pool = await sql.connect(config);
     
-    // Selects the columns required by the admin dashboard
     const result = await pool.request().query(
       `
         SELECT 
