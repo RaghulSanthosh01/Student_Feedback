@@ -3,6 +3,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import sql from "mssql";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -32,60 +33,97 @@ const config = {
   },
 };
 
-// --- UPDATED Sentiment Analysis Function (KEYWORD ONLY) ---
-const positiveKeywords = [
-    'good', 'great', 'excellent', 'amazing', 'fantastic', 
-    'love', 'helpful', 'best', 'clear', 'engaging', 
-    'understanding', 'explaining', 'knowledgeable', 'organized', 
-    'patient', 'effective', 'inspiring', 'fun', 'enjoyable',
-    'easy' // Added 'easy' for good explanation
-];
-const negativeKeywords = [
-    'bad', 'poor', 'terrible', 'awful', 'hate', 
-    'disappointing', 'worst', 'confusing', 'boring', 
-    'unhelpful', 'unclear', 'difficult' // Added teaching-specific negatives
-];
+// ---------------------- Gemini Client ----------------------
+if (!process.env.GEMINI_API_KEY) {
+    console.error("FATAL ERROR: GEMINI_API_KEY is not set.");
+}
+const genAI = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY}); 
+
+// ---------------------- Sentiment Analysis Function (FIXED with JSON Mode) ----------------------
+const MAX_RETRIES = 3;
+const DELAY_MS = 1000;
 
 async function getSentiment(feedbackText) {
     const textLower = feedbackText.toLowerCase();
 
-    // 1. Count keyword occurrences
-    let negativeCount = 0;
-    for (const keyword of negativeKeywords) {
-        if (textLower.includes(keyword)) {
-            negativeCount++;
-        }
-    }
-
-    let positiveCount = 0;
+    // --- START: EXPANDED KEYWORD OVERRIDE ---
+    
+    const positiveKeywords = ['good', 'great', 'excellent', 'amazing', 'fantastic', 'love', 'helpful', 'best'];
+    const negativeKeywords = ['bad', 'poor', 'terrible', 'awful', 'hate', 'disappointing', 'worst'];
+    
+    // Check for positive keywords
     for (const keyword of positiveKeywords) {
         if (textLower.includes(keyword)) {
-            positiveCount++;
+            return 'positive';
         }
     }
-
-    // 2. Determine sentiment based on counts
-    if (positiveCount > 0 && negativeCount === 0) {
-        console.log(`Sentiment: 'positive' via keyword matches: ${positiveCount}`);
-        return 'positive';
-    } 
     
-    if (negativeCount > 0 && positiveCount === 0) {
-        console.log(`Sentiment: 'negative' via keyword matches: ${negativeCount}`);
-        return 'negative';
-    } 
-    
-    if (positiveCount > 0 && negativeCount > 0) {
-        // Mixed sentiment (e.g., "Good class but the explaining was confusing")
-        console.log("Mixed keywords found. Defaulting to 'neutral'.");
-        return 'neutral';
+    // Check for negative keywords
+    for (const keyword of negativeKeywords) {
+        if (textLower.includes(keyword)) {
+            return 'negative';
+        }
     }
     
-    // 3. Default to neutral if no clear keywords are found
-    console.log("No clear keyword found. Defaulting to 'neutral'.");
-    return "neutral";
+    // --- END: EXPANDED KEYWORD OVERRIDE ---
+
+    // --- FALLBACK: GEMINI AI ANALYSIS ---
+
+    // Model usage is slightly different with the new SDK, using ai.models
+    const model = genAI.models.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+    
+    // Use JSON mode to force a predictable, structured response
+    const generationConfig = {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: "OBJECT",
+            properties: {
+                sentiment: {
+                    type: "STRING",
+                    description: "The sentiment of the feedback, must be 'positive', 'negative', or 'neutral'."
+                }
+            },
+            required: ["sentiment"]
+        }
+    };
+    
+    const prompt = `
+        Analyze the following student feedback and determine its core sentiment.
+        Feedback: "${feedbackText}"
+    `;
+
+    for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+            const result = await model.generateContent({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                config: generationConfig,
+            });
+
+            const jsonResponseText = result.text.trim();
+            const parsedJson = JSON.parse(jsonResponseText);
+            
+            // Check if the sentiment is one of the allowed values
+            const sentiment = parsedJson.sentiment ? parsedJson.sentiment.toLowerCase() : 'unknown';
+            if (['positive', 'negative', 'neutral'].includes(sentiment)) {
+                return sentiment;
+            }
+            
+            console.warn("Gemini returned invalid structured sentiment:", sentiment);
+            return 'unknown';
+
+        } catch (error) {
+            console.error(`Attempt ${i + 1} failed. Gemini API Error or JSON Parse Error:`, error.message);
+            if (i < MAX_RETRIES - 1) {
+                // Exponential backoff
+                const delay = DELAY_MS * Math.pow(2, i);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                return "unknown"; 
+            }
+        }
+    }
+    return "unknown"; 
 }
-// ----------------------------------------------------------------------------------
 
 // ---------------------- POST: Save Feedback (Data Submission Endpoint) ----------------------
 app.post("/api/saveFeedback", async (req, res) => {
@@ -96,10 +134,9 @@ app.post("/api/saveFeedback", async (req, res) => {
   }
 
   let pool;
-  let sentiment = 'unknown'; 
   try {
-    // 1. Analyze sentiment (using keyword logic)
-    sentiment = await getSentiment(feedback);
+    // 1. Analyze sentiment (now includes keyword override)
+    const sentiment = await getSentiment(feedback);
 
     // 2. Connect to SQL database
     pool = await sql.connect(config);
@@ -122,7 +159,7 @@ app.post("/api/saveFeedback", async (req, res) => {
   } catch (err) {
     console.error("Database or Server Error saving feedback:", err);
     if (pool) pool.close(); 
-    res.status(500).json({ message: "Error saving feedback. Check server logs.", calculatedSentiment: sentiment });
+    res.status(500).json({ message: "Error saving feedback. Check server logs." });
   }
 });
 
@@ -135,11 +172,11 @@ app.get("/api/getFeedback", async (req, res) => {
     const result = await pool.request().query(
       `
         SELECT 
-          Course, 
-          Teacher, 
-          FeedbackText, 
-          Sentiment, 
-          SubmittedAt 
+            Course, 
+            Teacher, 
+            FeedbackText, 
+            Sentiment, 
+            SubmittedAt 
         FROM Feedback 
         ORDER BY SubmittedAt DESC
       `
